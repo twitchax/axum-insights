@@ -1,0 +1,28 @@
+[package]
+name = "axum-insights"
+version = "0.1.0"
+edition = "2021"
+authors = ["Aaron Roney <twitchax@gmail.com>"]
+license = "MIT"
+description = "An Azure Application Insights exporter for axum via tracing."
+readme = "README.md"
+homepage = "https://github.com/twitchax/axum-insights"
+repository = "https://github.com/twitchax/axum-insights"
+keywords = ["axum", "application", "insights", "appinsights", "tracing"]
+categories = ["web-programming"]
+
+[dependencies]
+tracing = { version = "0.1.37" }
+opentelemetry = { version = "0.20", features = ["rt-tokio"]}
+opentelemetry-application-insights = { version = "0.27.0", features = ["reqwest-client", "metrics"] }
+tracing-opentelemetry = { version = "0.21.0" }
+tracing-subscriber = { version = "0.3.17" }
+futures = { version = "0.3.28" }
+http = { version = "0.2.9" }
+axum = { version = "0.6.20", features = ["macros"] }
+hyper = { version = "0.14.27", features = ["full"] }
+tower = { version = "0.4.13", features = ["full"] }
+serde = { version = "1.0.126" }
+serde_json = { version = "1.0.64" }
+tokio = { version = "1.29.1", features = ["rt", "macros", "signal", "parking_lot"] }
+reqwest = { version = "0.11.18", features = ["blocking"] }
