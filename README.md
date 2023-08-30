@@ -91,6 +91,12 @@ async fn handler(Json(body): Json<String>) -> Result<impl IntoResponse, WebError
 }
 ```
 
+## Acknowledgements
+
+This library depends on individual efforts of other maintainers such as:
+* [opentelemetry-application-insights](https://github.com/frigus02/opentelemetry-application-insights) by [@frigus02](https://github.com/frigus02).
+* [appinsights-rs](https://github.com/dmolokanov/appinsights-rs) by [@dmolokanov](https://github.com/dmolokanov).
+
 ## Test
 
 ```bash
