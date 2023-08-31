@@ -214,18 +214,14 @@ pub struct AppInsightsComplete<P, E> {
 /// The main telemetry struct.
 /// 
 /// Refer to the top-level documentation for usage information.
-pub struct AppInsights<S = Base, C = Client, R = opentelemetry::runtime::Tokio, P = (), E = ()>
-where
-    C: HttpClient + 'static,
-    R: RuntimeChannel<BatchMessage>,
-{
+pub struct AppInsights<S = Base, C = Client, R = opentelemetry::runtime::Tokio, U = Registry, P = (), E = ()> {
     connection_string: Option<String>,
     config: Config,
     client: C,
     sample_rate: f64,
     batch_runtime: R,
     minimum_level: LevelFilter,
-    subscriber: Option<Registry>,
+    subscriber: Option<U>,
     should_catch_panic: bool,
     field_mapper: OptionalFieldMapper,
     panic_mapper: OptionalPanicMapper<P>,
@@ -252,11 +248,7 @@ impl Default for AppInsights<Base> {
     }
 }
 
-impl<C, R, P, E> AppInsights<Base, C, R, P, E>
-where
-    C: HttpClient + 'static,
-    R: RuntimeChannel<BatchMessage>,
-{
+impl<C, R, U, P, E> AppInsights<Base, C, R, U, P, E> {
     /// Sets the connection string to use for telemetry.
     /// 
     /// If this is not set, then no telemetry will be sent.
@@ -267,7 +259,7 @@ where
     /// let i: AppInsights<WithConnectionString> = AppInsights::default()
     ///     .with_connection_string(None);
     /// ```
-    pub fn with_connection_string(self, connection_string: impl Into<Option<String>>) -> AppInsights<WithConnectionString, C, R, P, E> {
+    pub fn with_connection_string(self, connection_string: impl Into<Option<String>>) -> AppInsights<WithConnectionString, C, R, U, P, E> {
         AppInsights {
             connection_string: connection_string.into(),
             config: self.config,
@@ -285,11 +277,7 @@ where
     }
 }
 
-impl<C, R, P, E> AppInsights<WithConnectionString, C, R, P, E>
-where
-    C: HttpClient + 'static,
-    R: RuntimeChannel<BatchMessage>,
-{
+impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
     /// Sets the service namespace and name.
     /// 
     /// ```
@@ -301,7 +289,7 @@ where
     /// ```
     /// 
     /// This is a convenience method for [`AppInsights::with_trace_config`].
-    pub fn with_service_config(self, namespace: impl AsRef<str>, name: impl AsRef<str>) -> AppInsights<Ready, C, R, P> {
+    pub fn with_service_config(self, namespace: impl AsRef<str>, name: impl AsRef<str>) -> AppInsights<Ready, C, R, U, P> {
         let config = Config::default().with_resource(sdk::Resource::new(vec![
             KeyValue::new("service.namespace", namespace.as_ref().to_owned()),
             KeyValue::new("service.name", name.as_ref().to_owned()),
@@ -333,7 +321,7 @@ where
     ///     .with_connection_string(None)
     ///     .with_trace_config(Config::default());
     /// ```
-    pub fn with_trace_config(self, config: Config) -> AppInsights<Ready, C, R, P> {
+    pub fn with_trace_config(self, config: Config) -> AppInsights<Ready, C, R, U, P> {
         AppInsights {
             connection_string: self.connection_string,
             config,
@@ -351,11 +339,7 @@ where
     }
 }
 
-impl<C, R, P, E> AppInsights<Ready, C, R, P, E>
-where
-    C: HttpClient + 'static,
-    R: RuntimeChannel<BatchMessage>,
-{
+impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// Sets the HTTP client to use for sending telemetry.  The default is reqwest async client.
     /// 
     /// ```
@@ -366,7 +350,7 @@ where
     ///     .with_service_config("namespace", "name")
     ///     .with_client(reqwest::Client::new());
     /// ```
-    pub fn with_client(self, client: C) -> AppInsights<Ready, C, R, P, E> {
+    pub fn with_client(self, client: C) -> AppInsights<Ready, C, R, U, P, E> {
         AppInsights {
             connection_string: self.connection_string,
             config: self.config,
@@ -393,7 +377,7 @@ where
     ///     .with_service_config("namespace", "name")
     ///     .with_sample_rate(1.0);
     /// ```
-    pub fn with_sample_rate(self, sample_rate: f64) -> AppInsights<Ready, C, R, P, E> {
+    pub fn with_sample_rate(self, sample_rate: f64) -> AppInsights<Ready, C, R, U, P, E> {
         AppInsights {
             connection_string: self.connection_string,
             config: self.config,
@@ -421,7 +405,7 @@ where
     ///     .with_service_config("namespace", "name")
     ///     .with_minimum_level(LevelFilter::INFO);
     /// ```
-    pub fn with_minimum_level(self, minimum_level: LevelFilter) -> AppInsights<Ready, C, R, P, E> {
+    pub fn with_minimum_level(self, minimum_level: LevelFilter) -> AppInsights<Ready, C, R, U, P, E> {
         AppInsights {
             connection_string: self.connection_string,
             config: self.config,
@@ -444,12 +428,12 @@ where
     /// use axum_insights::{AppInsights, Ready};
     /// use tracing_subscriber::Registry;
     /// 
-    /// let i: AppInsights<Ready> = AppInsights::default()
+    /// let i = AppInsights::default()
     ///     .with_connection_string(None)
     ///     .with_service_config("namespace", "name")
     ///     .with_subscriber(tracing_subscriber::registry());
     /// ```
-    pub fn with_subscriber(self, subscriber: Registry) -> AppInsights<Ready, C, R, P, E> {
+    pub fn with_subscriber<T>(self, subscriber: T) -> AppInsights<Ready, C, R, T, P, E> {
         AppInsights {
             connection_string: self.connection_string,
             config: self.config,
@@ -477,7 +461,7 @@ where
     ///     .with_service_config("namespace", "name")
     ///     .with_runtime(Tokio);
     /// ```
-    pub fn with_runtime<T>(self, runtime: T) -> AppInsights<Ready, C, T, P, E>
+    pub fn with_runtime<T>(self, runtime: T) -> AppInsights<Ready, C, T, U, P, E>
     where
         T: RuntimeChannel<BatchMessage>,
     {
@@ -507,7 +491,7 @@ where
     ///     .with_service_config("namespace", "name")
     ///     .with_catch_panic(true);
     /// ```
-    pub fn with_catch_panic(self, should_catch_panic: bool) -> AppInsights<Ready, C, R, P, E> {
+    pub fn with_catch_panic(self, should_catch_panic: bool) -> AppInsights<Ready, C, R, U, P, E> {
         AppInsights {
             connection_string: self.connection_string,
             config: self.config,
@@ -539,7 +523,7 @@ where
     ///         map
     ///     });
     /// ```
-    pub fn with_field_mapper<F>(self, field_mapper: F) -> AppInsights<Ready, C, R, P, E>
+    pub fn with_field_mapper<F>(self, field_mapper: F) -> AppInsights<Ready, C, R, U, P, E>
     where
         F: Fn(&http::request::Parts) -> HashMap<String, String> + Send + Sync + 'static,
     {
@@ -575,7 +559,7 @@ where
     ///         (500, WebError { message: panic })
     ///     });
     /// ```
-    pub fn with_panic_mapper<F, T>(self, panic_mapper: F) -> AppInsights<Ready, C, R, T, E>
+    pub fn with_panic_mapper<F, T>(self, panic_mapper: F) -> AppInsights<Ready, C, R, U, T, E>
     where
         F: Fn(String) -> (u16, T) + Send + Sync + 'static,
     {
@@ -619,7 +603,7 @@ where
     ///     .with_service_config("namespace", "name")
     ///     .with_error_type::<WebError>();
     /// ```
-    pub fn with_error_type<T>(self) -> AppInsights<Ready, C, R, P, T> {
+    pub fn with_error_type<T>(self) -> AppInsights<Ready, C, R, U, P, T> {
         AppInsights {
             connection_string: self.connection_string,
             config: self.config,
@@ -651,26 +635,47 @@ where
     /// The global default currently has to be set by this library.  If you want to use other subscribers,
     /// then you need to use [`AppInsights::with_subscriber`] to inject that subscriber, and then
     /// allow this call to set the global default.
-    pub fn build_and_set_global_default(self) -> Result<AppInsightsComplete<P, E>, Box<dyn Error + Send + Sync + 'static>> {
-        let Some(connection_string) = self.connection_string else {
-            return Ok(AppInsightsComplete {
-                field_mapper: self.field_mapper,
-                panic_mapper: self.panic_mapper,
-                _phantom: std::marker::PhantomData,
-            });
-        };
+    pub fn build_and_set_global_default(self) -> Result<AppInsightsComplete<P, E>, Box<dyn Error + Send + Sync + 'static>>
+    where
+        C: HttpClient + 'static,
+        R: RuntimeChannel<BatchMessage>,
+        U: tracing_subscriber::layer::SubscriberExt + for<'span> tracing_subscriber::registry::LookupSpan<'span>  + Send + Sync + 'static
+    {
+        // This subscriber calculation needs to be separate in order to allow the type inference to work properly.
+        // Theoretically, we could do some magic with boxed traits to make it more readable, but this makes the types
+        // work nicely.
+        match self.subscriber {
+            Some(subscriber) => {
+                if let Some(connection_string) = self.connection_string {
+                    let tracer = opentelemetry_application_insights::new_pipeline_from_connection_string(connection_string)?
+                        .with_client(self.client)
+                        .with_trace_config(self.config)
+                        .with_sample_rate(self.sample_rate)
+                        .install_batch(self.batch_runtime);
 
-        let tracer = opentelemetry_application_insights::new_pipeline_from_connection_string(connection_string)?
-            .with_client(self.client)
-            .with_trace_config(self.config)
-            .with_sample_rate(self.sample_rate)
-            .install_batch(self.batch_runtime);
+                    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+                    let subscriber = subscriber.with(telemetry).with(self.minimum_level);
+                    tracing::subscriber::set_global_default(subscriber)?;
+                } else {
+                    tracing::subscriber::set_global_default(subscriber.with(self.minimum_level))?;
+                }
+            },
+            None => {
+                if let Some(connection_string) = self.connection_string {
+                    let tracer = opentelemetry_application_insights::new_pipeline_from_connection_string(connection_string)?
+                        .with_client(self.client)
+                        .with_trace_config(self.config)
+                        .with_sample_rate(self.sample_rate)
+                        .install_batch(self.batch_runtime);
 
-        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-
-        let subscriber = self.subscriber.unwrap_or_default().with(telemetry).with(self.minimum_level);
-
-        tracing::subscriber::set_global_default(subscriber)?;
+                    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+                    let subscriber = tracing_subscriber::registry().with(telemetry).with(self.minimum_level);
+                    tracing::subscriber::set_global_default(subscriber)?;
+                } else {
+                    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(self.minimum_level))?;
+                }
+            },
+        }
 
         if self.should_catch_panic {
             let default_panic = panic::take_hook();
@@ -808,7 +813,7 @@ where
             http.route = route.as_str(),
             http.response.status_code = tracing::field::Empty,
             otel.status_code = tracing::field::Empty,
-            otel.status_description = tracing::field::Empty,
+            otel.status_message = tracing::field::Empty,
             extra_fields = serde_json::to_string_pretty(&extra_fields).unwrap()
         );
 
@@ -863,7 +868,7 @@ where
                 let is_success = status.is_success() || status.is_redirection() || status.is_informational();
 
                 // Get the span information about the response.
-                let (response, otel_status, otel_status_description) = if is_success {
+                let (response, otel_status, otel_status_message) = if is_success {
                     // The happy path!
                     (response, "OK", format!(r#"{{ "status": {} }}"#, status.as_u16()))
                 } else {
@@ -903,11 +908,98 @@ where
 
                 span.record("http.response.status_code", status.as_u16());
                 span.record("otel.status_code", otel_status);
-                span.record("otel.status_description", otel_status_description);
+                span.record("otel.status_message", otel_status_message);
 
                 Ok(response)
             }
             .instrument(span),
         )
+    }
+}
+
+// Tests.
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::Sender;
+
+    use axum::{Router, routing::get};
+    use http::StatusCode;
+    use tower::ServiceExt;
+    use tracing::{Subscriber, span};
+    use tracing_subscriber::Layer;
+
+    use super::*;
+
+    struct TestSubscriberLayer {
+        sender: Sender<String>,
+    }
+
+    impl<S> Layer<S> for TestSubscriberLayer
+    where
+        S: Subscriber
+    {
+        fn on_new_span(&self, attrs: &span::Attributes<'_>, _id: &span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+            self.sender.send(format!("new|{}", attrs.metadata().name())).unwrap();
+        }
+
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+            self.sender.send(format!("event|{}", event.metadata().name())).unwrap();
+        }
+
+        fn on_record(&self, _id: &span::Id, values: &span::Record<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+            self.sender.send(format!("record|{:?}", values)).unwrap();
+        }
+
+        fn on_close(&self, _id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+            self.sender.send("close".to_string()).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_integration() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let subscriber = tracing_subscriber::registry().with(TestSubscriberLayer {
+            sender: sender.clone(),
+        });
+
+        let i = AppInsights::default()
+            .with_connection_string(None)
+            .with_service_config("namespace", "name")
+            .with_catch_panic(true)
+            .with_subscriber(subscriber)
+            .build_and_set_global_default()
+            .unwrap();
+
+        let layer = i.layer();
+
+        let mut app: Router<()> = Router::new()
+            .route("/succeed1", get(|| async { Response::new(Body::empty()) }))
+            .route("/succeed2", get(|| async { (StatusCode::NOT_MODIFIED, "") }))
+            .layer(layer);
+
+        // Regular success.
+
+        let request = Request::builder().uri("/succeed1").body(Body::empty()).unwrap();
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), 200);
+
+        assert_eq!("new|request", receiver.recv().unwrap());
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 200"));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"OK\""));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"{ \\\"status\\\": 200 }\""));
+        assert_eq!("close", receiver.recv().unwrap());
+
+        // Redirectional success.
+
+        let request = Request::builder().uri("/succeed2").body(Body::empty()).unwrap();
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), 304);
+
+        assert_eq!("new|request", receiver.recv().unwrap());
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 304"));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"OK\""));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"{ \\\"status\\\": 304 }\""));
+        assert_eq!("close", receiver.recv().unwrap());
     }
 }
