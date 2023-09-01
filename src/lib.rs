@@ -1058,13 +1058,39 @@ where
 mod tests {
     use std::sync::mpsc::Sender;
 
-    use axum::{Router, routing::get};
+    use axum::{Router, routing::get, response::IntoResponse};
     use http::StatusCode;
+    use serde::Deserialize;
     use tower::ServiceExt;
     use tracing::{Subscriber, span};
     use tracing_subscriber::Layer;
 
     use super::*;
+
+    #[derive(Clone, Default, Serialize, Deserialize)]
+    struct WebError {
+        status: u16,
+        message: String,
+    }
+
+    impl AppInsightsError for WebError {
+        fn message(&self) -> Option<String> {
+            Some(self.message.clone())
+        }
+
+        fn backtrace(&self) -> Option<String> {
+            None
+        }
+    }
+
+    impl IntoResponse for WebError {
+        fn into_response(self) -> Response {
+            let code = StatusCode::from_u16(self.status).unwrap();
+            let body = serde_json::to_string(&self).unwrap();
+
+            (code, body).into_response()
+        }
+    }
 
     struct TestSubscriberLayer {
         sender: Sender<String>,
@@ -1101,8 +1127,24 @@ mod tests {
         let i = AppInsights::default()
             .with_connection_string(None)
             .with_service_config("namespace", "name")
+            .with_client(reqwest::Client::new())
+            .with_sample_rate(1.0)
+            .with_minimum_level(LevelFilter::INFO)
+            .with_runtime(opentelemetry::runtime::Tokio)
             .with_catch_panic(true)
             .with_subscriber(subscriber)
+            .with_field_mapper(|_| {
+                let mut map = HashMap::new();
+                map.insert("extra_field".to_owned(), "extra_value".to_owned());
+                map
+            })
+            .with_panic_mapper(|panic| {
+                (500, WebError { status: 500, message: panic })
+            })
+            .with_success_filter(|status| {
+                status.is_success() || status.is_redirection() || status.is_informational() || status == StatusCode::NOT_FOUND
+            })
+            .with_error_type::<WebError>()
             .build_and_set_global_default()
             .unwrap();
 
@@ -1111,7 +1153,8 @@ mod tests {
         let mut app: Router<()> = Router::new()
             .route("/succeed1", get(|| async { Response::new(Body::empty()) }))
             .route("/succeed2", get(|| async { (StatusCode::NOT_MODIFIED, "") }))
-            .route("/fail1", get(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "") }))
+            .route("/succeed3", get(|| async { (StatusCode::NOT_FOUND, "") }))
+            .route("/fail1", get(|| async { WebError { status: 429, message: "foo".to_string() } }))
             .route("/fail2", get(|| async { panic!("panic") }))
             .layer(layer);
 
@@ -1137,17 +1180,28 @@ mod tests {
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"OK\""));
         assert_eq!("close", receiver.recv().unwrap());
 
+        // Custom success.
+
+        let request = Request::builder().uri("/succeed3").body(Body::empty()).unwrap();
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), 404);
+
+        assert_eq!("new|request", receiver.recv().unwrap());
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 404"));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"OK\""));
+        assert_eq!("close", receiver.recv().unwrap());
+
         // Failure.
 
         let request = Request::builder().uri("/fail1").body(Body::empty()).unwrap();
         let response = app.ready().await.unwrap().call(request).await.unwrap();
-        assert_eq!(response.status(), 500);
+        assert_eq!(response.status(), 429);
 
         assert_eq!("new|request", receiver.recv().unwrap());
         assert!(receiver.recv().unwrap().starts_with("event|event")); // One day should be `event|exception`.
-        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 500"));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 429"));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"ERROR\""));
-        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"null\""));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"{\\n  \\\"status\\\": 429,\\n  \\\"message\\\": \\\"foo\\\"\\n}\""));
         assert_eq!("close", receiver.recv().unwrap());
 
         // Panic.
@@ -1161,7 +1215,37 @@ mod tests {
         assert!(receiver.recv().unwrap().starts_with("event|event")); // Error.
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 500"));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"ERROR\""));
-        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"null\""));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"{\\n  \\\"status\\\": 500,\\n  \\\"message\\\": \\\"Some(\\\\\\\"panic\\\\\\\")\\\"\\n}\""));
         assert_eq!("close", receiver.recv().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_noop() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let subscriber = tracing_subscriber::registry().with(TestSubscriberLayer {
+            sender: sender.clone(),
+        });
+
+        let i = AppInsights::default()
+            .with_connection_string(None)
+            .with_service_config("namespace", "name")
+            .with_subscriber(subscriber)
+            .with_noop(true)
+            .build_and_set_global_default()
+            .unwrap();
+
+        let layer = i.layer();
+
+        let mut app: Router<()> = Router::new()
+            .route("/succeed1", get(|| async { Response::new(Body::empty()) }))
+            .layer(layer);
+
+        // Regular success.
+
+        let request = Request::builder().uri("/succeed1").body(Body::empty()).unwrap();
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), 200);
+
+        assert!(receiver.try_recv().is_err());
     }
 }
