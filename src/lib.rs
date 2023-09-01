@@ -39,6 +39,7 @@
 //!     .with_subscriber(tracing_subscriber::registry())    // Sets the subscriber to use for telemetry.  Default is a new subscriber.
 //!     .with_runtime(opentelemetry::runtime::Tokio)        // Sets the runtime to use for telemetry.  Default is Tokio.
 //!     .with_catch_panic(true)                             // Sets whether or not to catch panics, and emit a trace for them.  Default is false.
+//!     .with_noop(true)                                    // Sets whether or not to make this telemetry layer a noop.  Default is false.
 //!     .with_field_mapper(|parts| {                        // Sets a function to extract extra fields from the request.  Default is no extra fields.
 //!         let mut map = HashMap::new();
 //!         map.insert("extra_field".to_owned(), "extra_value".to_owned());
@@ -46,6 +47,9 @@
 //!     })
 //!     .with_panic_mapper(|panic| {                        // Sets a function to extract extra fields from a panic.  Default is a default error.
 //!         (500, WebError { message: panic })
+//!     })
+//!     .with_success_filter(|status| {                     // Sets a function to determine the success-iness of a status.  Default is (100 - 399 => true).
+//!         status.is_success() || status.is_redirection() || status.is_informational() || *status == http::StatusCode::NOT_FOUND
 //!     })
 //!     .with_error_type::<WebError>()
 //!     .build_and_set_global_default()
@@ -94,6 +98,7 @@ use std::{
 
 use axum::{extract::MatchedPath, response::Response, RequestPartsExt};
 use futures::{future::BoxFuture, FutureExt};
+use http::StatusCode;
 use hyper::{
     body::{Bytes, HttpBody},
     Body, Request,
@@ -201,13 +206,16 @@ pub struct Ready;
 
 type OptionalPanicMapper<E> = Option<Arc<dyn Fn(String) -> (u16, E) + Send + Sync + 'static>>;
 type OptionalFieldMapper = Option<Arc<dyn Fn(&http::request::Parts) -> HashMap<String, String> + Send + Sync + 'static>>;
+type OptionalSuccessFilter = Option<Arc<dyn Fn(StatusCode) -> bool + Send + Sync + 'static>>;
 
 /// The complete [`AppInsights`] builder struct.
 /// 
 /// This struct is returned from [`AppInsights::build_and_set_global_default`], and it is used to create the [`AppInsightsLayer`].
 pub struct AppInsightsComplete<P, E> {
+    is_noop: bool,
     field_mapper: OptionalFieldMapper,
     panic_mapper: OptionalPanicMapper<P>,
+    success_filter: OptionalSuccessFilter,
     _phantom: std::marker::PhantomData<E>,
 }
 
@@ -223,8 +231,10 @@ pub struct AppInsights<S = Base, C = Client, R = opentelemetry::runtime::Tokio, 
     minimum_level: LevelFilter,
     subscriber: Option<U>,
     should_catch_panic: bool,
+    is_noop: bool,
     field_mapper: OptionalFieldMapper,
     panic_mapper: OptionalPanicMapper<P>,
+    success_filter: OptionalSuccessFilter,
     _phantom1: std::marker::PhantomData<S>,
     _phantom2: std::marker::PhantomData<E>,
 }
@@ -240,8 +250,10 @@ impl Default for AppInsights<Base> {
             minimum_level: LevelFilter::INFO,
             subscriber: None,
             should_catch_panic: false,
+            is_noop: false,
             field_mapper: None,
             panic_mapper: None,
+            success_filter: None,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -269,8 +281,10 @@ impl<C, R, U, P, E> AppInsights<Base, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: self.subscriber,
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -304,8 +318,10 @@ impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: self.subscriber,
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -331,8 +347,10 @@ impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: self.subscriber,
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -360,8 +378,10 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: self.subscriber,
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -387,8 +407,10 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: self.subscriber,
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -415,8 +437,10 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             minimum_level,
             subscriber: self.subscriber,
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -443,8 +467,10 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: Some(subscriber),
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -474,8 +500,10 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: self.subscriber,
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -501,8 +529,42 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: self.subscriber,
             should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
+            _phantom1: std::marker::PhantomData,
+            _phantom2: std::marker::PhantomData,
+        }
+    }
+
+    /// Sets whether or not to make this telemetry layer a noop.  The default is false.
+    /// 
+    /// This is useful whenever you are running axum tests, as the global subscriber cannot be
+    /// set in a multiple times.  Effectively, this causes the telemetry layer to be a no-op.
+    /// 
+    /// ```
+    /// use axum_insights::{AppInsights, Ready};
+    /// 
+    /// let i = AppInsights::default()
+    ///     .with_connection_string(None)
+    ///     .with_service_config("namespace", "name")
+    ///     .with_noop(true);
+    /// ```
+    pub fn with_noop(self, should_noop: bool) -> AppInsights<Ready, C, R, U, P, E> {
+        AppInsights {
+            connection_string: self.connection_string,
+            config: self.config,
+            client: self.client,
+            sample_rate: self.sample_rate,
+            batch_runtime: self.batch_runtime,
+            minimum_level: self.minimum_level,
+            subscriber: self.subscriber,
+            should_catch_panic: self.should_catch_panic,
+            is_noop: should_noop,
+            field_mapper: self.field_mapper,
+            panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -536,8 +598,10 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: self.subscriber,
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: Some(Arc::new(field_mapper)),
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -572,8 +636,48 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: self.subscriber,
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: Some(Arc::new(panic_mapper)),
+            success_filter: self.success_filter,
+            _phantom1: std::marker::PhantomData,
+            _phantom2: std::marker::PhantomData,
+        }
+    }
+
+    /// Sets a function to determine the success-iness of a status.  The default is (100 - 399 => true).
+    /// 
+    /// This allows you to fine-tune which statuses are considered successful, and which are not.  If you have
+    /// lots of spurious 404s, for example, you can add that to the success statuses.
+    /// 
+    /// ```
+    /// use axum_insights::{AppInsights, Ready};
+    /// use http::StatusCode;
+    /// 
+    /// let i = AppInsights::default()
+    ///     .with_connection_string(None)
+    ///     .with_service_config("namespace", "name")
+    ///     .with_status_filter(|status| {
+    ///         status.is_success() || status.is_redirection() || status.is_informational() || *status == StatusCode::NOT_FOUND
+    ///     });
+    /// ```
+    pub fn with_success_filter<F>(self, success_filter: F) -> AppInsights<Ready, C, R, U, P, E>
+    where
+        F: Fn(StatusCode) -> bool + Send + Sync + 'static,
+    {
+        AppInsights {
+            connection_string: self.connection_string,
+            config: self.config,
+            client: self.client,
+            sample_rate: self.sample_rate,
+            batch_runtime: self.batch_runtime,
+            minimum_level: self.minimum_level,
+            subscriber: self.subscriber,
+            should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
+            field_mapper: self.field_mapper,
+            panic_mapper: self.panic_mapper,
+            success_filter: Some(Arc::new(success_filter)),
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -613,8 +717,10 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             minimum_level: self.minimum_level,
             subscriber: self.subscriber,
             should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom1: std::marker::PhantomData,
             _phantom2: std::marker::PhantomData,
         }
@@ -641,6 +747,16 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
         R: RuntimeChannel<BatchMessage>,
         U: tracing_subscriber::layer::SubscriberExt + for<'span> tracing_subscriber::registry::LookupSpan<'span>  + Send + Sync + 'static
     {
+        if self.is_noop {
+            return Ok(AppInsightsComplete {
+                is_noop: true,
+                field_mapper: None,
+                panic_mapper: None,
+                success_filter: None,
+                _phantom: std::marker::PhantomData,
+            });
+        }
+
         // This subscriber calculation needs to be separate in order to allow the type inference to work properly.
         // Theoretically, we could do some magic with boxed traits to make it more readable, but this makes the types
         // work nicely.
@@ -697,8 +813,10 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
         }
 
         Ok(AppInsightsComplete {
+            is_noop: false,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -726,8 +844,10 @@ impl<P, E> AppInsightsComplete<P, E> {
     /// ```
     pub fn layer(self) -> AppInsightsLayer<P, E> {
         AppInsightsLayer {
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper,
             panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -739,8 +859,10 @@ impl<P, E> AppInsightsComplete<P, E> {
 /// Generally, this type will not be used, other than to pass to [`axum::Router::layer`].
 #[derive(Clone)]
 pub struct AppInsightsLayer<P, E> {
+    is_noop: bool,
     field_mapper: OptionalFieldMapper,
     panic_mapper: OptionalPanicMapper<P>,
+    success_filter: OptionalSuccessFilter,
     _phantom: std::marker::PhantomData<E>,
 }
 
@@ -750,8 +872,10 @@ impl<S, P, E> Layer<S> for AppInsightsLayer<P, E> {
     fn layer(&self, inner: S) -> Self::Service {
         AppInsightsMiddleware {
             inner,
+            is_noop: self.is_noop,
             field_mapper: self.field_mapper.clone(),
             panic_mapper: self.panic_mapper.clone(),
+            success_filter: self.success_filter.clone(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -765,8 +889,10 @@ impl<S, P, E> Layer<S> for AppInsightsLayer<P, E> {
 #[derive(Clone)]
 pub struct AppInsightsMiddleware<S, P, E> {
     inner: S,
+    is_noop: bool,
     field_mapper: OptionalFieldMapper,
     panic_mapper: OptionalPanicMapper<P>,
+    success_filter: OptionalSuccessFilter,
     _phantom: std::marker::PhantomData<E>,
 }
 
@@ -787,6 +913,10 @@ where
     }
 
     fn call(&mut self, request: Request<Body>) -> Self::Future {
+        if self.is_noop {
+            return Box::pin(self.inner.call(request));
+        }
+
         // Get all of the basic request information.
         let method = request.method().to_string();
         let uri = request.uri().to_string();
@@ -819,6 +949,7 @@ where
 
         // Clone the panic mapper so that it can be used in the future.
         let panic_mapper = self.panic_mapper.clone();
+        let success_filter = self.success_filter.clone();
 
         // Kick off the request.
         let future = self.inner.call(request);
@@ -865,7 +996,8 @@ where
 
                 // Get the response status information, and determine success.
                 let status = response.status();
-                let is_success = status.is_success() || status.is_redirection() || status.is_informational();
+
+                let is_success = success_filter.as_ref().map(|f| f(status)).unwrap_or_else(|| status.is_success() || status.is_redirection() || status.is_informational());
 
                 // Get the span information about the response.
                 let (response, otel_status, otel_status_message) = if is_success {
