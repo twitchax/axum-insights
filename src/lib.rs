@@ -14,6 +14,9 @@
 //! use axum_insights::AppInsightsError;
 //! use tracing_subscriber::filter::LevelFilter;
 //! use std::collections::HashMap;
+//! use tracing::Instrument;
+//! 
+//! // Define some helper types for the example.
 //! 
 //! #[derive(Default, Serialize, Deserialize, Clone)]
 //! struct WebError {
@@ -30,31 +33,48 @@
 //!     }
 //! }
 //! 
+//! // Set up the exporter, and get the `tower::Service` layer.
+//! 
 //! let telemetry_layer = AppInsights::default()
-//!     .with_connection_string(None)                       // Accepts an optional connection string.  If None, then no telemetry is sent.
-//!     .with_service_config("namespace", "name")           // Sets the service namespace and name.  Default is empty.
-//!     .with_client(reqwest::Client::new())                // Sets the HTTP client to use for sending telemetry.  Default is reqwest async client.
-//!     .with_sample_rate(1.0)                              // Sets the sample rate for telemetry.  Default is 1.0.
-//!     .with_minimum_level(LevelFilter::INFO)              // Sets the minimum level for telemetry.  Default is INFO.
-//!     .with_subscriber(tracing_subscriber::registry())    // Sets the subscriber to use for telemetry.  Default is a new subscriber.
-//!     .with_runtime(opentelemetry::runtime::Tokio)        // Sets the runtime to use for telemetry.  Default is Tokio.
-//!     .with_catch_panic(true)                             // Sets whether or not to catch panics, and emit a trace for them.  Default is false.
-//!     .with_noop(true)                                    // Sets whether or not to make this telemetry layer a noop.  Default is false.
-//!     .with_field_mapper(|parts| {                        // Sets a function to extract extra fields from the request.  Default is no extra fields.
+//!     // Accepts an optional connection string.  If None, then no telemetry is sent.
+//!     .with_connection_string(None)
+//!     // Sets the service namespace and name.  Default is empty.
+//!     .with_service_config("namespace", "name")
+//!     // Sets the HTTP client to use for sending telemetry.  Default is reqwest async client.
+//!     .with_client(reqwest::Client::new())
+//!     // Sets the sample rate for telemetry.  Default is 1.0.
+//!     .with_sample_rate(1.0)
+//!     // Sets the minimum level for telemetry.  Default is INFO.
+//!     .with_minimum_level(LevelFilter::INFO)
+//!     // Sets the subscriber to use for telemetry.  Default is a new subscriber.
+//!     .with_subscriber(tracing_subscriber::registry())
+//!     // Sets the runtime to use for telemetry.  Default is Tokio.
+//!     .with_runtime(opentelemetry::runtime::Tokio)
+//!     // Sets whether or not to catch panics, and emit a trace for them.  Default is false.
+//!     .with_catch_panic(true)
+//!     // Sets whether or not to make this telemetry layer a noop.  Default is false.
+//!     .with_noop(true)
+//!     // Sets a function to extract extra fields from the request.  Default is no extra fields.
+//!     .with_field_mapper(|parts| {
 //!         let mut map = HashMap::new();
 //!         map.insert("extra_field".to_owned(), "extra_value".to_owned());
 //!         map
 //!     })
-//!     .with_panic_mapper(|panic| {                        // Sets a function to extract extra fields from a panic.  Default is a default error.
+//!     // Sets a function to extract extra fields from a panic.  Default is a default error.
+//!     .with_panic_mapper(|panic| {
 //!         (500, WebError { message: panic })
 //!     })
-//!     .with_success_filter(|status| {                     // Sets a function to determine the success-iness of a status.  Default is (100 - 399 => true).
+//!     // Sets a function to determine the success-iness of a status.  Default is (100 - 399 => true).
+//!     .with_success_filter(|status| {
 //!         status.is_success() || status.is_redirection() || status.is_informational() || status == http::StatusCode::NOT_FOUND
 //!     })
+//!     // Sets the common error type for the application, and will automatically extract information from handlers that return that error.
 //!     .with_error_type::<WebError>()
 //!     .build_and_set_global_default()
 //!     .unwrap()
 //!     .layer();
+//! 
+//! // Add the layer to your app.
 //! 
 //! // You likely will not need to specify `Router<()>` in your implementation.  This is just for the example.
 //! let app: Router<()> = Router::new()
@@ -67,18 +87,29 @@
 //! use axum::Json;
 //! use tracing::{instrument, debug, error, info, warn};
 //! 
+//! // Instrument async handlers to get method-specific tracing.
 //! #[instrument]
 //! async fn handler(Json(body): Json<String>) -> Result<impl IntoResponse, WebError> {
+//!     // Emit events using the `tracing` macros.
 //!     debug!("Debug message");
 //!     info!("Info message");
 //!     warn!("Warn message");
 //!     error!("Error message");
+//! 
+//!     // Create new spans using the `tracing` macros.
+//!     let span = tracing::info_span!("DB Query");
+//!     
+//!     db_query().instrument(span).await;
 //!     
 //!     if body == "error" {
 //!         return Err(WebError { message: "Error".to_owned() });
 //!     }
 //! 
 //!     Ok(())
+//! }
+//! 
+//! async fn db_query() {
+//!     // ...
 //! }
 //! ```
 
