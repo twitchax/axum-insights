@@ -49,7 +49,7 @@
 //!         (500, WebError { message: panic })
 //!     })
 //!     .with_success_filter(|status| {                     // Sets a function to determine the success-iness of a status.  Default is (100 - 399 => true).
-//!         status.is_success() || status.is_redirection() || status.is_informational() || *status == http::StatusCode::NOT_FOUND
+//!         status.is_success() || status.is_redirection() || status.is_informational() || status == http::StatusCode::NOT_FOUND
 //!     })
 //!     .with_error_type::<WebError>()
 //!     .build_and_set_global_default()
@@ -657,8 +657,8 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// let i = AppInsights::default()
     ///     .with_connection_string(None)
     ///     .with_service_config("namespace", "name")
-    ///     .with_status_filter(|status| {
-    ///         status.is_success() || status.is_redirection() || status.is_informational() || *status == StatusCode::NOT_FOUND
+    ///     .with_success_filter(|status| {
+    ///         status.is_success() || status.is_redirection() || status.is_informational() || status == StatusCode::NOT_FOUND
     ///     });
     /// ```
     pub fn with_success_filter<F>(self, success_filter: F) -> AppInsights<Ready, C, R, U, P, E>
