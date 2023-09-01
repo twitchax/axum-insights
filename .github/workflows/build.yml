@@ -35,6 +35,6 @@ jobs:
         run: cargo install cargo-tarpaulin
         continue-on-error: true
       - run: cargo tarpaulin --skip-clean --out Xml
-      - uses: codecov/codecov-action@v2
+      - uses: codecov/codecov-action@v3
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
