@@ -976,6 +976,8 @@ mod tests {
         let mut app: Router<()> = Router::new()
             .route("/succeed1", get(|| async { Response::new(Body::empty()) }))
             .route("/succeed2", get(|| async { (StatusCode::NOT_MODIFIED, "") }))
+            .route("/fail1", get(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "") }))
+            .route("/fail2", get(|| async { panic!("panic") }))
             .layer(layer);
 
         // Regular success.
@@ -990,7 +992,7 @@ mod tests {
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"{ \\\"status\\\": 200 }\""));
         assert_eq!("close", receiver.recv().unwrap());
 
-        // Redirectional success.
+        // Redirect success.
 
         let request = Request::builder().uri("/succeed2").body(Body::empty()).unwrap();
         let response = app.ready().await.unwrap().call(request).await.unwrap();
@@ -1000,6 +1002,33 @@ mod tests {
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 304"));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"OK\""));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"{ \\\"status\\\": 304 }\""));
+        assert_eq!("close", receiver.recv().unwrap());
+
+        // Failure.
+
+        let request = Request::builder().uri("/fail1").body(Body::empty()).unwrap();
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), 500);
+
+        assert_eq!("new|request", receiver.recv().unwrap());
+        assert!(receiver.recv().unwrap().starts_with("event|event")); // One day should be `event|exception`.
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 500"));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"ERROR\""));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"null\""));
+        assert_eq!("close", receiver.recv().unwrap());
+
+        // Panic.
+
+        let request = Request::builder().uri("/fail2").body(Body::empty()).unwrap();
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), 500);
+
+        assert_eq!("new|request", receiver.recv().unwrap());
+        assert!(receiver.recv().unwrap().starts_with("event|event")); // Panic.
+        assert!(receiver.recv().unwrap().starts_with("event|event")); // Error.
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 500"));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"ERROR\""));
+        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"null\""));
         assert_eq!("close", receiver.recv().unwrap());
     }
 }
