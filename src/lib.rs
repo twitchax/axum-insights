@@ -908,7 +908,10 @@ where
 
                 span.record("http.response.status_code", status.as_u16());
                 span.record("otel.status_code", otel_status);
-                span.record("otel.status_message", otel_status_message);
+
+                if otel_status != "OK" {
+                    span.record("otel.status_message", otel_status_message);
+                }
 
                 Ok(response)
             }
@@ -989,7 +992,6 @@ mod tests {
         assert_eq!("new|request", receiver.recv().unwrap());
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 200"));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"OK\""));
-        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"{ \\\"status\\\": 200 }\""));
         assert_eq!("close", receiver.recv().unwrap());
 
         // Redirect success.
@@ -1001,7 +1003,6 @@ mod tests {
         assert_eq!("new|request", receiver.recv().unwrap());
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 304"));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"OK\""));
-        assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"{ \\\"status\\\": 304 }\""));
         assert_eq!("close", receiver.recv().unwrap());
 
         // Failure.
