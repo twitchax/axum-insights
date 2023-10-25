@@ -55,6 +55,8 @@ let telemetry_layer = AppInsights::default()
     .with_service_config("namespace", "name")
     // Sets the HTTP client to use for sending telemetry.  Default is reqwest async client.
     .with_client(reqwest::Client::new())
+    // Sets whether or not live metrics are collected.  Default is false.
+    .with_live_metrics(true)
     // Sets the sample rate for telemetry.  Default is 1.0.
     .with_sample_rate(1.0)
     // Sets the minimum level for telemetry.  Default is INFO.

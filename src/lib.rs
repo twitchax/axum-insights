@@ -42,6 +42,8 @@
 //!     .with_service_config("namespace", "name")
 //!     // Sets the HTTP client to use for sending telemetry.  Default is reqwest async client.
 //!     .with_client(reqwest::Client::new())
+//!     // Sets whether or not live metrics are collected.  Default is false.
+//!     .with_live_metrics(true)
 //!     // Sets the sample rate for telemetry.  Default is 1.0.
 //!     .with_sample_rate(1.0)
 //!     // Sets the minimum level for telemetry.  Default is INFO.
@@ -257,6 +259,7 @@ pub struct AppInsights<S = Base, C = Client, R = opentelemetry::runtime::Tokio, 
     connection_string: Option<String>,
     config: Config,
     client: C,
+    enable_live_metrics: bool,
     sample_rate: f64,
     batch_runtime: R,
     minimum_level: LevelFilter,
@@ -276,6 +279,7 @@ impl Default for AppInsights<Base> {
             connection_string: None,
             config: Config::default(),
             client: Client::new(),
+            enable_live_metrics: false,
             sample_rate: 1.0,
             batch_runtime: opentelemetry::runtime::Tokio,
             minimum_level: LevelFilter::INFO,
@@ -307,6 +311,7 @@ impl<C, R, U, P, E> AppInsights<Base, C, R, U, P, E> {
             connection_string: connection_string.into(),
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -344,6 +349,7 @@ impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
             connection_string: self.connection_string,
             config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -373,6 +379,7 @@ impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
             connection_string: self.connection_string,
             config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -404,6 +411,38 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client,
+            enable_live_metrics: self.enable_live_metrics,
+            sample_rate: self.sample_rate,
+            batch_runtime: self.batch_runtime,
+            minimum_level: self.minimum_level,
+            subscriber: self.subscriber,
+            should_catch_panic: self.should_catch_panic,
+            is_noop: self.is_noop,
+            field_mapper: self.field_mapper,
+            panic_mapper: self.panic_mapper,
+            success_filter: self.success_filter,
+            _phantom1: std::marker::PhantomData,
+            _phantom2: std::marker::PhantomData,
+        }
+    }
+
+    /// Sets whether or not live metrics should be collected.  The default is false.
+    /// 
+    /// ```
+    /// use axum_insights::{AppInsights, Ready};
+    /// 
+    /// let i: AppInsights<Ready> = AppInsights::default()
+    ///     .with_connection_string(None)
+    ///     .with_service_config("namespace", "name")
+    ///     .with_client(reqwest::Client::new())
+    ///     .with_live_metrics(true);
+    /// ```
+    pub fn with_live_metrics(self, should_collect_live_metrics: bool) -> AppInsights<Ready, C, R, U, P, E> {
+        AppInsights {
+            connection_string: self.connection_string,
+            config: self.config,
+            client: self.client,
+            enable_live_metrics: should_collect_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -433,6 +472,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -463,6 +503,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level,
@@ -493,6 +534,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -526,6 +568,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: runtime,
             minimum_level: self.minimum_level,
@@ -555,6 +598,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -587,6 +631,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -624,6 +669,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -662,6 +708,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -700,6 +747,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -743,6 +791,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             connection_string: self.connection_string,
             config: self.config,
             client: self.client,
+            enable_live_metrics: self.enable_live_metrics,
             sample_rate: self.sample_rate,
             batch_runtime: self.batch_runtime,
             minimum_level: self.minimum_level,
@@ -796,6 +845,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
                 if let Some(connection_string) = self.connection_string {
                     let tracer = opentelemetry_application_insights::new_pipeline_from_connection_string(connection_string)?
                         .with_client(self.client)
+                        .with_live_metrics(self.enable_live_metrics)
                         .with_trace_config(self.config)
                         .with_sample_rate(self.sample_rate)
                         .install_batch(self.batch_runtime);
@@ -811,6 +861,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
                 if let Some(connection_string) = self.connection_string {
                     let tracer = opentelemetry_application_insights::new_pipeline_from_connection_string(connection_string)?
                         .with_client(self.client)
+                        .with_live_metrics(self.enable_live_metrics)
                         .with_trace_config(self.config)
                         .with_sample_rate(self.sample_rate)
                         .install_batch(self.batch_runtime);
@@ -959,7 +1010,7 @@ where
         let route = futures::executor::block_on(parts.extract::<MatchedPath>())
             .map(|m| m.as_str().to_owned())
             .unwrap_or_else(|_| "unknown".to_owned());
-        let extra_fields = self.field_mapper.as_ref().map(|f| f(&parts)).unwrap_or(HashMap::new());
+        let extra_fields = self.field_mapper.as_ref().map(|f| f(&parts)).unwrap_or_default();
 
         // Put the request back together.
         let request = Request::from_parts(parts, body);
