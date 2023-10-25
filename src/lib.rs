@@ -97,6 +97,7 @@
 //!     info!("Info message");
 //!     warn!("Warn message");
 //!     error!("Error message");
+//!     event!(name: "exception", exception.message = "error message");
 //! 
 //!     // Create new spans using the `tracing` macros.
 //!     let span = tracing::info_span!("DB Query");
