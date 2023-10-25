@@ -87,7 +87,7 @@
 //! 
 //! use axum::response::IntoResponse;
 //! use axum::Json;
-//! use tracing::{instrument, debug, error, info, warn};
+//! use tracing::{Level, instrument, debug, error, info, warn, event};
 //! 
 //! // Instrument async handlers to get method-specific tracing.
 //! #[instrument]
@@ -97,7 +97,7 @@
 //!     info!("Info message");
 //!     warn!("Warn message");
 //!     error!("Error message");
-//!     event!(name: "exception", exception.message = "error message");
+//!     event!(name: "exception", Level::ERROR, exception.message = "error message");
 //! 
 //!     // Create new spans using the `tracing` macros.
 //!     let span = tracing::info_span!("DB Query");
