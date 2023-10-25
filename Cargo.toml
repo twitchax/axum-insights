@@ -12,7 +12,7 @@ keywords = ["axum", "application", "insights", "appinsights", "tracing"]
 categories = ["web-programming"]
 
 [dependencies]
-tracing = { version = "0.1.37" }
+tracing = { version = "0.1.40" }
 opentelemetry = { version = "0.20", features = ["rt-tokio"]}
 opentelemetry-application-insights = { version = "0.28.0", features = ["reqwest-client", "metrics", "live-metrics"] }
 tracing-opentelemetry = { version = "0.21.0" }

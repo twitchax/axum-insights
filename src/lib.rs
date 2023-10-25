@@ -148,7 +148,7 @@ use opentelemetry_application_insights::HttpClient;
 use reqwest::Client;
 use serde::{de::DeserializeOwned, Serialize};
 use tower::{Layer, Service};
-use tracing::{Instrument, Span};
+use tracing::{Instrument, Span, Level};
 use tracing_subscriber::{filter::LevelFilter, prelude::__tracing_subscriber_SubscriberExt, Registry};
 
 // Re-exports.
@@ -883,7 +883,9 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
                 let backtrace = Backtrace::force_capture().to_string();
 
                 // This doesn't work because this macro prescribes the name without allowing it to be overriden.
-                tracing::error!(
+                tracing::event!(
+                    name: "exception",
+                    Level::ERROR,
                     ai.customEvent.name = "exception",
                     "exception.type" = "PANIC",
                     exception.message = payload_string,
@@ -1101,7 +1103,9 @@ where
                     let error_string = serde_json::to_string_pretty(&error).unwrap();
 
                     // This doesn't work because this macro prescribes the name without allowing it to be overriden.
-                    tracing::error!(
+                    tracing::event!(
+                        name: "exception",
+                        Level::ERROR,
                         ai.customEvent.name = "exception",
                         "exception.type" = format!("HTTP {}", status.as_u16()),
                         exception.message = error.message().unwrap_or_default(),
@@ -1280,7 +1284,7 @@ mod tests {
         assert_eq!(response.status(), 429);
 
         assert_eq!("new|request", receiver.recv().unwrap());
-        assert!(receiver.recv().unwrap().starts_with("event|event")); // One day should be `event|exception`.
+        assert!(receiver.recv().unwrap().starts_with("event|exception"));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 429"));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"ERROR\""));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"{\\n  \\\"status\\\": 429,\\n  \\\"message\\\": \\\"foo\\\"\\n}\""));
@@ -1293,8 +1297,8 @@ mod tests {
         assert_eq!(response.status(), 500);
 
         assert_eq!("new|request", receiver.recv().unwrap());
-        assert!(receiver.recv().unwrap().starts_with("event|event")); // Panic.
-        assert!(receiver.recv().unwrap().starts_with("event|event")); // Error.
+        assert!(receiver.recv().unwrap().starts_with("event|exception"));
+        assert!(receiver.recv().unwrap().starts_with("event|exception"));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { http.response.status_code: 500"));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_code: \"ERROR\""));
         assert!(receiver.recv().unwrap().starts_with("record|Record { values: ValueSet { otel.status_message: \"{\\n  \\\"status\\\": 500,\\n  \\\"message\\\": \\\"Some(\\\\\\\"panic\\\\\\\")\\\"\\n}\""));
