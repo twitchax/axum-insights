@@ -64,7 +64,7 @@ let telemetry_layer = AppInsights::default()
     // Sets the subscriber to use for telemetry.  Default is a new subscriber.
     .with_subscriber(tracing_subscriber::registry())
     // Sets the runtime to use for telemetry.  Default is Tokio.
-    .with_runtime(opentelemetry::runtime::Tokio)
+    .with_runtime(opentelemetry_sdk::runtime::Tokio)
     // Sets whether or not to catch panics, and emit a trace for them.  Default is false.
     .with_catch_panic(true)
     // Sets whether or not to make this telemetry layer a noop.  Default is false.
