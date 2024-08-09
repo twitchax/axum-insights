@@ -51,7 +51,7 @@
 //!     // Sets the subscriber to use for telemetry.  Default is a new subscriber.
 //!     .with_subscriber(tracing_subscriber::registry())
 //!     // Sets the runtime to use for telemetry.  Default is Tokio.
-//!     .with_runtime(opentelemetry::runtime::Tokio)
+//!     .with_runtime(opentelemetry_sdk::runtime::Tokio)
 //!     // Sets whether or not to catch panics, and emit a trace for them.  Default is false.
 //!     .with_catch_panic(true)
 //!     // Sets whether or not to make this telemetry layer a noop.  Default is false.
@@ -130,21 +130,13 @@ use std::{
     task::{Context, Poll},
 };
 
-use axum::{extract::MatchedPath, response::Response, RequestPartsExt};
+use axum::{extract::MatchedPath, response::Response, RequestPartsExt, body::Body};
 use futures::{future::BoxFuture, FutureExt};
 use http::StatusCode;
-use hyper::{
-    body::{Bytes, HttpBody},
-    Body, Request,
-};
-use opentelemetry::{
-    runtime::RuntimeChannel,
-    sdk::{
-        self,
-        trace::{BatchMessage, Config},
-    },
-    KeyValue,
-};
+use http_body_util::BodyExt;
+use hyper::Request;
+use opentelemetry::KeyValue;
+use opentelemetry_sdk::{runtime::{RuntimeChannel, Tokio}, trace::Config};
 use opentelemetry_application_insights::HttpClient;
 use reqwest::Client;
 use serde::{de::DeserializeOwned, Serialize};
@@ -256,7 +248,7 @@ pub struct AppInsightsComplete<P, E> {
 /// The main telemetry struct.
 /// 
 /// Refer to the top-level documentation for usage information.
-pub struct AppInsights<S = Base, C = Client, R = opentelemetry::runtime::Tokio, U = Registry, P = (), E = ()> {
+pub struct AppInsights<S = Base, C = Client, R = Tokio, U = Registry, P = (), E = ()> {
     connection_string: Option<String>,
     config: Config,
     client: C,
@@ -282,7 +274,7 @@ impl Default for AppInsights<Base> {
             client: Client::new(),
             enable_live_metrics: false,
             sample_rate: 1.0,
-            batch_runtime: opentelemetry::runtime::Tokio,
+            batch_runtime: Tokio,
             minimum_level: LevelFilter::INFO,
             subscriber: None,
             should_catch_panic: false,
@@ -341,7 +333,7 @@ impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
     /// 
     /// This is a convenience method for [`AppInsights::with_trace_config`].
     pub fn with_service_config(self, namespace: impl AsRef<str>, name: impl AsRef<str>) -> AppInsights<Ready, C, R, U, P> {
-        let config = Config::default().with_resource(sdk::Resource::new(vec![
+        let config = Config::default().with_resource(opentelemetry_sdk::Resource::new(vec![
             KeyValue::new("service.namespace", namespace.as_ref().to_owned()),
             KeyValue::new("service.name", name.as_ref().to_owned()),
         ]));
@@ -369,7 +361,7 @@ impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
     /// 
     /// ```
     /// use axum_insights::{AppInsights, Ready};
-    /// use opentelemetry::sdk::trace::Config;
+    /// use opentelemetry_sdk::trace::Config;
     /// 
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
@@ -554,7 +546,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// ```
     /// use axum_insights::{AppInsights, Ready};
-    /// use opentelemetry::runtime::Tokio;
+    /// use opentelemetry_sdk::runtime::Tokio;
     /// 
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
@@ -563,7 +555,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// ```
     pub fn with_runtime<T>(self, runtime: T) -> AppInsights<Ready, C, T, U, P, E>
     where
-        T: RuntimeChannel<BatchMessage>,
+        T: RuntimeChannel,
     {
         AppInsights {
             connection_string: self.connection_string,
@@ -825,7 +817,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     pub fn build_and_set_global_default(self) -> Result<AppInsightsComplete<P, E>, Box<dyn Error + Send + Sync + 'static>>
     where
         C: HttpClient + 'static,
-        R: RuntimeChannel<BatchMessage>,
+        R: RuntimeChannel,
         U: tracing_subscriber::layer::SubscriberExt + for<'span> tracing_subscriber::registry::LookupSpan<'span>  + Send + Sync + 'static
     {
         if self.is_noop {
@@ -1074,7 +1066,7 @@ where
                         Ok(Response::builder()
                             .status(status)
                             .header("content-type", "application/json")
-                            .body(Body::from(error_string).boxed_unsync().map_err(axum::Error::new).boxed_unsync())
+                            .body(Body::from(error_string))
                             .unwrap())
                     }
                 }?;
@@ -1095,7 +1087,7 @@ where
                     let (parts, body) = response.into_parts();
 
                     // Get the body bytes.
-                    let body_bytes = hyper::body::to_bytes(body).await.unwrap_or(Bytes::new());
+                    let body_bytes = body.collect().await.unwrap_or_default().to_bytes();
 
                     // Deserialize the error.
                     let error: E = serde_json::from_slice(&body_bytes).unwrap_or_default();
@@ -1114,7 +1106,7 @@ where
                     );
 
                     // Recreate the body.
-                    let body = Body::from(body_bytes).boxed_unsync().map_err(axum::Error::new).boxed_unsync();
+                    let body = Body::from(body_bytes);
 
                     // Recreate the response.
                     let response = Response::from_parts(parts, body);
@@ -1148,7 +1140,6 @@ mod tests {
     use axum::{Router, routing::get, response::IntoResponse};
     use http::StatusCode;
     use serde::Deserialize;
-    use tower::ServiceExt;
     use tracing::{Subscriber, span};
     use tracing_subscriber::Layer;
 
@@ -1217,7 +1208,7 @@ mod tests {
             .with_client(reqwest::Client::new())
             .with_sample_rate(1.0)
             .with_minimum_level(LevelFilter::INFO)
-            .with_runtime(opentelemetry::runtime::Tokio)
+            .with_runtime(Tokio)
             .with_catch_panic(true)
             .with_subscriber(subscriber)
             .with_field_mapper(|_| {
@@ -1248,7 +1239,8 @@ mod tests {
         // Regular success.
 
         let request = Request::builder().uri("/succeed1").body(Body::empty()).unwrap();
-        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        // This is required because there are multiple impls of `ready` for `Router`. 🙄
+        let response = <axum::Router as tower::ServiceExt<Request<Body>>>::ready(&mut app).await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), 200);
 
         assert_eq!("new|request", receiver.recv().unwrap());
@@ -1259,7 +1251,7 @@ mod tests {
         // Redirect success.
 
         let request = Request::builder().uri("/succeed2").body(Body::empty()).unwrap();
-        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        let response = <axum::Router as tower::ServiceExt<Request<Body>>>::ready(&mut app).await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), 304);
 
         assert_eq!("new|request", receiver.recv().unwrap());
@@ -1270,7 +1262,7 @@ mod tests {
         // Custom success.
 
         let request = Request::builder().uri("/succeed3").body(Body::empty()).unwrap();
-        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        let response = <axum::Router as tower::ServiceExt<Request<Body>>>::ready(&mut app).await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), 404);
 
         assert_eq!("new|request", receiver.recv().unwrap());
@@ -1281,7 +1273,7 @@ mod tests {
         // Failure.
 
         let request = Request::builder().uri("/fail1").body(Body::empty()).unwrap();
-        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        let response = <axum::Router as tower::ServiceExt<Request<Body>>>::ready(&mut app).await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), 429);
 
         assert_eq!("new|request", receiver.recv().unwrap());
@@ -1294,7 +1286,7 @@ mod tests {
         // Panic.
 
         let request = Request::builder().uri("/fail2").body(Body::empty()).unwrap();
-        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        let response = <axum::Router as tower::ServiceExt<Request<Body>>>::ready(&mut app).await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), 500);
 
         assert_eq!("new|request", receiver.recv().unwrap());
@@ -1330,7 +1322,7 @@ mod tests {
         // Regular success.
 
         let request = Request::builder().uri("/succeed1").body(Body::empty()).unwrap();
-        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        let response = <axum::Router as tower::ServiceExt<Request<Body>>>::ready(&mut app).await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), 200);
 
         assert!(receiver.try_recv().is_err());
