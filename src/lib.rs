@@ -884,7 +884,8 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
                     ai.customEvent.name = "exception",
                     "exception.type" = "PANIC",
                     exception.message = payload_string,
-                    exception.stacktrace = backtrace
+                    exception.stacktrace = backtrace,
+                    "exception"
                 );
 
                 default_panic(p);
