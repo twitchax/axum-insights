@@ -39,7 +39,7 @@
 //!     // Accepts an optional connection string.  If None, then no telemetry is sent.
 //!     .with_connection_string(None)
 //!     // Sets the service namespace and name.  Default is empty.
-//!     .with_service_config("namespace", "name")
+//!     .with_service_config("namespace", "name", "servername")
 //!     // Sets the HTTP client to use for sending telemetry.  Default is reqwest async client.
 //!     .with_client(reqwest::Client::new())
 //!     // Sets whether or not live metrics are collected.  Default is false.
@@ -122,15 +122,10 @@
 #![warn(rustdoc::broken_intra_doc_links, rust_2018_idioms, clippy::all, missing_docs)]
 
 use std::{
-    backtrace::Backtrace,
-    collections::HashMap,
-    error::Error,
-    panic::{self, AssertUnwindSafe},
-    sync::Arc,
-    task::{Context, Poll},
+    backtrace::Backtrace, collections::HashMap, error::Error, panic::{self, AssertUnwindSafe}, sync::Arc, task::{Context, Poll}
 };
 
-use axum::{extract::MatchedPath, response::Response, RequestPartsExt, body::Body};
+use axum::{body::Body, extract::MatchedPath, response::Response, RequestPartsExt};
 use futures::{future::BoxFuture, FutureExt};
 use http::StatusCode;
 use http_body_util::BodyExt;
@@ -138,7 +133,6 @@ use hyper::Request;
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::{runtime::{RuntimeChannel, Tokio}, trace::Config};
 use opentelemetry_application_insights::HttpClient;
-use reqwest::Client;
 use serde::{de::DeserializeOwned, Serialize};
 use tower::{Layer, Service};
 use tracing::{Instrument, Span, Level};
@@ -154,6 +148,7 @@ use tracing_subscriber::{filter::LevelFilter, prelude::__tracing_subscriber_Subs
 pub mod exports {
     pub use opentelemetry;
     pub use opentelemetry_application_insights;
+    #[cfg(feature = "reqwest-client")]
     pub use reqwest;
     pub use serde;
     pub use tokio;
@@ -189,7 +184,7 @@ pub mod exports {
 /// 
 /// let telemetry_layer = AppInsights::default()
 ///     .with_connection_string(None)
-///     .with_service_config("namespace", "name")
+///     .with_service_config("namespace", "name", "servername")
 ///     .with_error_type::<WebError>()
 ///     .build_and_set_global_default()
 ///     .unwrap()
@@ -248,7 +243,8 @@ pub struct AppInsightsComplete<P, E> {
 /// The main telemetry struct.
 /// 
 /// Refer to the top-level documentation for usage information.
-pub struct AppInsights<S = Base, C = Client, R = Tokio, U = Registry, P = (), E = ()> {
+#[cfg(feature = "reqwest-client")]
+pub struct AppInsights<S = Base, C = reqwest::Client, R = Tokio, U = Registry, P = (), E = ()> {
     connection_string: Option<String>,
     config: Config,
     client: C,
@@ -266,12 +262,58 @@ pub struct AppInsights<S = Base, C = Client, R = Tokio, U = Registry, P = (), E 
     _phantom2: std::marker::PhantomData<E>,
 }
 
+#[cfg(feature = "reqwest-client")]
 impl Default for AppInsights<Base> {
     fn default() -> Self {
         Self {
             connection_string: None,
             config: Config::default(),
-            client: Client::new(),
+            client: reqwest::Client::new(),
+            enable_live_metrics: false,
+            sample_rate: 1.0,
+            batch_runtime: Tokio,
+            minimum_level: LevelFilter::INFO,
+            subscriber: None,
+            should_catch_panic: false,
+            is_noop: false,
+            field_mapper: None,
+            panic_mapper: None,
+            success_filter: None,
+            _phantom1: std::marker::PhantomData,
+            _phantom2: std::marker::PhantomData,
+        }
+    }
+}
+
+/// The main telemetry struct.
+/// 
+/// Refer to the top-level documentation for usage information.
+#[cfg(not(feature = "reqwest-client"))]
+pub struct AppInsights<S = Base, C = NoopClient, R = Tokio, U = Registry, P = (), E = ()> {
+    connection_string: Option<String>,
+    config: Config,
+    client: C,
+    enable_live_metrics: bool,
+    sample_rate: f64,
+    batch_runtime: R,
+    minimum_level: LevelFilter,
+    subscriber: Option<U>,
+    should_catch_panic: bool,
+    is_noop: bool,
+    field_mapper: OptionalFieldMapper,
+    panic_mapper: OptionalPanicMapper<P>,
+    success_filter: OptionalSuccessFilter,
+    _phantom1: std::marker::PhantomData<S>,
+    _phantom2: std::marker::PhantomData<E>,
+}
+
+#[cfg(not(feature = "reqwest-client"))]
+impl Default for AppInsights<Base> {
+    fn default() -> Self {
+        Self {
+            connection_string: None,
+            config: Config::default(),
+            client: NoopClient,
             enable_live_metrics: false,
             sample_rate: 1.0,
             batch_runtime: Tokio,
@@ -328,14 +370,16 @@ impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
     /// 
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name");
+    ///     .with_service_config("namespace", "name", "servername");
     /// ```
     /// 
     /// This is a convenience method for [`AppInsights::with_trace_config`].
-    pub fn with_service_config(self, namespace: impl AsRef<str>, name: impl AsRef<str>) -> AppInsights<Ready, C, R, U, P> {
+    pub fn with_service_config(self, namespace: impl AsRef<str>, name: impl AsRef<str>, servername: impl AsRef<str>) -> AppInsights<Ready, C, R, U, P> {
         let config = Config::default().with_resource(opentelemetry_sdk::Resource::new(vec![
             KeyValue::new("service.namespace", namespace.as_ref().to_owned()),
             KeyValue::new("service.name", name.as_ref().to_owned()),
+            // KeyValue::new("ai.cloud.roleInstance", server_name.clone()), // Azure-specific resource attribute
+            KeyValue::new("service.instance.id", servername.as_ref().to_owned()),  // General OpenTelemetry attribute
         ]));
 
         AppInsights {
@@ -396,7 +440,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_client(reqwest::Client::new());
     /// ```
     pub fn with_client(self, client: C) -> AppInsights<Ready, C, R, U, P, E> {
@@ -426,7 +470,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_client(reqwest::Client::new())
     ///     .with_live_metrics(true);
     /// ```
@@ -457,7 +501,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_sample_rate(1.0);
     /// ```
     pub fn with_sample_rate(self, sample_rate: f64) -> AppInsights<Ready, C, R, U, P, E> {
@@ -488,7 +532,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_minimum_level(LevelFilter::INFO);
     /// ```
     pub fn with_minimum_level(self, minimum_level: LevelFilter) -> AppInsights<Ready, C, R, U, P, E> {
@@ -519,7 +563,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_subscriber(tracing_subscriber::registry());
     /// ```
     pub fn with_subscriber<T>(self, subscriber: T) -> AppInsights<Ready, C, R, T, P, E> {
@@ -550,7 +594,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_runtime(Tokio);
     /// ```
     pub fn with_runtime<T>(self, runtime: T) -> AppInsights<Ready, C, T, U, P, E>
@@ -583,7 +627,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_catch_panic(true);
     /// ```
     pub fn with_catch_panic(self, should_catch_panic: bool) -> AppInsights<Ready, C, R, U, P, E> {
@@ -616,7 +660,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_noop(true);
     /// ```
     pub fn with_noop(self, should_noop: bool) -> AppInsights<Ready, C, R, U, P, E> {
@@ -647,7 +691,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_field_mapper(|parts| {
     ///         let mut map = HashMap::new();
     ///         map.insert("extra_field".to_owned(), "extra_value".to_owned());
@@ -688,7 +732,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_panic_mapper(|panic| {
     ///         (500, WebError { message: panic })
     ///     });
@@ -727,7 +771,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_success_filter(|status| {
     ///         status.is_success() || status.is_redirection() || status.is_informational() || status == StatusCode::NOT_FOUND
     ///     });
@@ -776,7 +820,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .with_error_type::<WebError>();
     /// ```
     pub fn with_error_type<T>(self) -> AppInsights<Ready, C, R, U, P, T> {
@@ -806,7 +850,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// 
     /// let i: AppInsightsComplete<_, _> = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .build_and_set_global_default()
     ///     .unwrap();
     /// ```
@@ -882,7 +926,8 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
                     ai.customEvent.name = "exception",
                     "exception.type" = "PANIC",
                     exception.message = payload_string,
-                    exception.stacktrace = backtrace
+                    exception.stacktrace = backtrace,
+                    "exception"
                 );
 
                 default_panic(p);
@@ -908,7 +953,7 @@ impl<P, E> AppInsightsComplete<P, E> {
     /// 
     /// let i: AppInsightsComplete<_, _> = AppInsights::default()
     ///     .with_connection_string(None)
-    ///     .with_service_config("namespace", "name")
+    ///     .with_service_config("namespace", "name", "servername")
     ///     .build_and_set_global_default()
     ///     .unwrap();
     /// 
@@ -1131,6 +1176,24 @@ where
     }
 }
 
+// Non-reqwest noop-client.
+
+/// A no-op client for use when the `reqwest-client` feature is not enabled.
+/// 
+/// Usually, this means that the user should have their own client, and they should use the
+/// [`AppInsights::with_client`] method to inject it.
+#[cfg(not(feature = "reqwest-client"))]
+#[derive(Debug)]
+pub struct NoopClient;
+
+#[cfg(not(feature = "reqwest-client"))]
+#[axum::async_trait]
+impl HttpClient for NoopClient {
+    async fn send(&self, _request: Request<Vec<u8>>) -> Result<Response<axum::body::Bytes>, Box<dyn Error + Sync + Send>> {
+        Ok(Response::new(axum::body::Bytes::new()))
+    }
+}
+
 // Tests.
 
 #[cfg(test)]
@@ -1204,7 +1267,7 @@ mod tests {
 
         let i = AppInsights::default()
             .with_connection_string(None)
-            .with_service_config("namespace", "name")
+            .with_service_config("namespace", "name", "servername")
             .with_client(reqwest::Client::new())
             .with_sample_rate(1.0)
             .with_minimum_level(LevelFilter::INFO)
@@ -1307,7 +1370,7 @@ mod tests {
 
         let i = AppInsights::default()
             .with_connection_string(None)
-            .with_service_config("namespace", "name")
+            .with_service_config("namespace", "name", "servername")
             .with_subscriber(subscriber)
             .with_noop(true)
             .build_and_set_global_default()
