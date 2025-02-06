@@ -919,7 +919,6 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
                 let payload_string = format!("{:?}", p.payload().downcast_ref::<&str>());
                 let backtrace = Backtrace::force_capture().to_string();
 
-                // This doesn't work because this macro prescribes the name without allowing it to be overriden.
                 tracing::event!(
                     name: "exception",
                     Level::ERROR,
@@ -1140,14 +1139,14 @@ where
                     // Get the stringified error.
                     let error_string = serde_json::to_string_pretty(&error).unwrap();
 
-                    // This doesn't work because this macro prescribes the name without allowing it to be overriden.
                     tracing::event!(
                         name: "exception",
                         Level::ERROR,
                         ai.customEvent.name = "exception",
                         "exception.type" = format!("HTTP {}", status.as_u16()),
                         exception.message = error.message().unwrap_or_default(),
-                        exception.stacktrace = error.backtrace().unwrap_or_default()
+                        exception.stacktrace = error.backtrace().unwrap_or_default(),
+                        "exception"
                     );
 
                     // Recreate the body.
@@ -1187,7 +1186,7 @@ where
 pub struct NoopClient;
 
 #[cfg(not(feature = "reqwest-client"))]
-#[axum::async_trait]
+#[async_trait::async_trait]
 impl HttpClient for NoopClient {
     async fn send(&self, _request: Request<Vec<u8>>) -> Result<Response<axum::body::Bytes>, Box<dyn Error + Sync + Send>> {
         Ok(Response::new(axum::body::Bytes::new()))

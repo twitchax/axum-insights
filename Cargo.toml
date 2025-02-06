@@ -16,19 +16,20 @@ default = ["reqwest-client"]
 reqwest-client = ["dep:reqwest", "opentelemetry-application-insights/reqwest-client"]
 
 [dependencies]
-tracing = { version = "0.1.40" }
-opentelemetry = { version = "0.27.1" }
-opentelemetry_sdk = { version = "0.27.1", features = ["rt-tokio"] }
-opentelemetry-application-insights = { version = "0.37.0", features = ["metrics", "live-metrics"] }
-tracing-opentelemetry = { version = "0.28.0" }
+async-trait = { version = "0.1" }
+tracing = { version = "0.1" }
+opentelemetry = { version = "0.27" }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-application-insights = { version = "0.37", features = ["metrics", "live-metrics"] }
+tracing-opentelemetry = { version = "0.28" }
 tracing-subscriber = { version = "0.3" }
 futures = { version = "0.3" }
-http = { version = "1.2.0" }
-http-body-util = { version = "0.1.2" }
-axum = { version = "0.8.1", features = ["macros"] }
-hyper = { version = "1.5.2", features = ["full"] }
-tower = { version = "0.5.2", features = ["full"] }
+http = { version = "1.2" }
+http-body-util = { version = "0.1" }
+axum = { version = "0.8", features = ["macros"] }
+hyper = { version = "1.6", features = ["full"] }
+tower = { version = "0.5", features = ["full"] }
 serde = { version = "1" }
 serde_json = { version = "1" }
 tokio = { version = "1", features = ["rt", "macros", "signal", "parking_lot"] }
-reqwest = { version = "0.12.12", features = ["blocking"], optional = true }
+reqwest = { version = "0.12", features = ["blocking"], optional = true }
