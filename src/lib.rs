@@ -122,15 +122,10 @@
 #![warn(rustdoc::broken_intra_doc_links, rust_2018_idioms, clippy::all, missing_docs)]
 
 use std::{
-    backtrace::Backtrace,
-    collections::HashMap,
-    error::Error,
-    panic::{self, AssertUnwindSafe},
-    sync::Arc,
-    task::{Context, Poll},
+    backtrace::Backtrace, collections::HashMap, error::Error, panic::{self, AssertUnwindSafe}, sync::Arc, task::{Context, Poll}
 };
 
-use axum::{extract::MatchedPath, response::Response, RequestPartsExt, body::Body};
+use axum::{body::Body, extract::MatchedPath, response::Response, RequestPartsExt};
 use futures::{future::BoxFuture, FutureExt};
 use http::StatusCode;
 use http_body_util::BodyExt;
@@ -138,7 +133,6 @@ use hyper::Request;
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::{runtime::{RuntimeChannel, Tokio}, trace::Config};
 use opentelemetry_application_insights::HttpClient;
-use reqwest::Client;
 use serde::{de::DeserializeOwned, Serialize};
 use tower::{Layer, Service};
 use tracing::{Instrument, Span, Level};
@@ -154,6 +148,7 @@ use tracing_subscriber::{filter::LevelFilter, prelude::__tracing_subscriber_Subs
 pub mod exports {
     pub use opentelemetry;
     pub use opentelemetry_application_insights;
+    #[cfg(feature = "reqwest-client")]
     pub use reqwest;
     pub use serde;
     pub use tokio;
@@ -248,7 +243,8 @@ pub struct AppInsightsComplete<P, E> {
 /// The main telemetry struct.
 /// 
 /// Refer to the top-level documentation for usage information.
-pub struct AppInsights<S = Base, C = Client, R = Tokio, U = Registry, P = (), E = ()> {
+#[cfg(feature = "reqwest-client")]
+pub struct AppInsights<S = Base, C = reqwest::Client, R = Tokio, U = Registry, P = (), E = ()> {
     connection_string: Option<String>,
     config: Config,
     client: C,
@@ -266,12 +262,58 @@ pub struct AppInsights<S = Base, C = Client, R = Tokio, U = Registry, P = (), E 
     _phantom2: std::marker::PhantomData<E>,
 }
 
+#[cfg(feature = "reqwest-client")]
 impl Default for AppInsights<Base> {
     fn default() -> Self {
         Self {
             connection_string: None,
             config: Config::default(),
-            client: Client::new(),
+            client: reqwest::Client::new(),
+            enable_live_metrics: false,
+            sample_rate: 1.0,
+            batch_runtime: Tokio,
+            minimum_level: LevelFilter::INFO,
+            subscriber: None,
+            should_catch_panic: false,
+            is_noop: false,
+            field_mapper: None,
+            panic_mapper: None,
+            success_filter: None,
+            _phantom1: std::marker::PhantomData,
+            _phantom2: std::marker::PhantomData,
+        }
+    }
+}
+
+/// The main telemetry struct.
+/// 
+/// Refer to the top-level documentation for usage information.
+#[cfg(not(feature = "reqwest-client"))]
+pub struct AppInsights<S = Base, C = NoopClient, R = Tokio, U = Registry, P = (), E = ()> {
+    connection_string: Option<String>,
+    config: Config,
+    client: C,
+    enable_live_metrics: bool,
+    sample_rate: f64,
+    batch_runtime: R,
+    minimum_level: LevelFilter,
+    subscriber: Option<U>,
+    should_catch_panic: bool,
+    is_noop: bool,
+    field_mapper: OptionalFieldMapper,
+    panic_mapper: OptionalPanicMapper<P>,
+    success_filter: OptionalSuccessFilter,
+    _phantom1: std::marker::PhantomData<S>,
+    _phantom2: std::marker::PhantomData<E>,
+}
+
+#[cfg(not(feature = "reqwest-client"))]
+impl Default for AppInsights<Base> {
+    fn default() -> Self {
+        Self {
+            connection_string: None,
+            config: Config::default(),
+            client: NoopClient,
             enable_live_metrics: false,
             sample_rate: 1.0,
             batch_runtime: Tokio,
@@ -1131,6 +1173,24 @@ where
             }
             .instrument(span),
         )
+    }
+}
+
+// Non-reqwest noop-client.
+
+/// A no-op client for use when the `reqwest-client` feature is not enabled.
+/// 
+/// Usually, this means that the user should have their own client, and they should use the
+/// [`AppInsights::with_client`] method to inject it.
+#[cfg(not(feature = "reqwest-client"))]
+#[derive(Debug)]
+pub struct NoopClient;
+
+#[cfg(not(feature = "reqwest-client"))]
+#[axum::async_trait]
+impl HttpClient for NoopClient {
+    async fn send(&self, _request: Request<Vec<u8>>) -> Result<Response<axum::body::Bytes>, Box<dyn Error + Sync + Send>> {
+        Ok(Response::new(axum::body::Bytes::new()))
     }
 }
 
