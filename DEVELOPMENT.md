@@ -3,5 +3,5 @@
 ## Publish to Cargo
 
 ```bash
-$ cargo publish -p axum-insights
+$ cargo release --execute minor
 ```
