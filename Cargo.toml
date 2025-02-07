@@ -26,7 +26,7 @@ tracing-subscriber = { version = "0.3" }
 futures = { version = "0.3" }
 http = { version = "1.2" }
 http-body-util = { version = "0.1" }
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.8", default-features = false, features = ["matched-path", "macros"] }
 hyper = { version = "1.6", features = ["full"] }
 tower = { version = "0.5", features = ["full"] }
 serde = { version = "1" }
@@ -34,4 +34,4 @@ serde_json = { version = "1" }
 reqwest = { version = "0.12", features = ["blocking"], optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
