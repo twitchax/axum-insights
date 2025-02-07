@@ -27,7 +27,7 @@ http = { version = "1.1" }
 http-body-util = { version = "0.1" }
 axum = { version = "0.7", default-features = false, features = ["json", "matched-path", "macros"] }
 hyper = { version = "1.4", default-features = false }
-tower = { version = "0.4", default-features = false }
+tower = { version = "0.4", default-features = false, features = ["util"] }
 serde = { version = "1" }
 serde_json = { version = "1" }
 reqwest = { version = "0.12", features = ["blocking"], optional = true }
