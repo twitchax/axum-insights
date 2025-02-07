@@ -31,5 +31,7 @@ hyper = { version = "1.6", features = ["full"] }
 tower = { version = "0.5", features = ["full"] }
 serde = { version = "1" }
 serde_json = { version = "1" }
-tokio = { version = "1", features = ["rt", "macros", "signal", "parking_lot"] }
 reqwest = { version = "0.12", features = ["blocking"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
