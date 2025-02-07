@@ -151,7 +151,6 @@ pub mod exports {
     #[cfg(feature = "reqwest-client")]
     pub use reqwest;
     pub use serde;
-    pub use tokio;
     pub use tracing;
     pub use tracing_opentelemetry;
     pub use tracing_subscriber;
